@@ -1,0 +1,161 @@
+Building configuration...
+
+Current configuration : 4536 bytes
+!
+version 15.4
+service timestamps debug datetime msec localtime show-timezone
+service timestamps log datetime msec localtime show-timezone
+service password-encryption
+!
+hostname R-AAA
+!
+security passwords min-length 8
+logging buffered 64000
+logging console notifications
+enable secret 9 <HASH>
+!
+aaa new-model
+!
+aaa group server radius GRUPO-NPS
+ server name NPS
+!
+aaa authentication login CON-AUX group GRUPO-NPS local
+aaa authentication login VTY-SSH local
+aaa authentication enable default enable
+aaa authorization console
+aaa authorization exec CON-AUX group GRUPO-NPS local
+aaa authorization exec VTY-SSH local
+aaa accounting exec CON-AUX start-stop group GRUPO-NPS
+!
+aaa session-id common
+clock timezone AST -4 0
+!
+ip dhcp excluded-address 10.23.56.1 10.23.56.9
+ip dhcp excluded-address 10.23.56.101 10.23.56.127
+!
+ip dhcp pool VLAN10-ADMIN
+ network 10.23.56.0 255.255.255.128
+ default-router 10.23.56.1
+ dns-server 10.23.56.138
+ domain-name itla.local
+!
+no ip domain lookup
+ip domain name itla.local
+ip cef
+login block-for 120 attempts 3 within 60
+login on-failure log
+login on-success log
+!
+archive
+ log config
+  logging enable
+  notify syslog contenttype plaintext
+  hidekeys
+username admin privilege 15 secret 9 <HASH>
+!
+ip ssh time-out 60
+ip ssh logging events
+ip ssh version 2
+!
+interface Ethernet0/0
+ description Gestion OOB - Cloud0
+ ip address dhcp
+ ip access-group GESTION-IN in
+ ip access-group GESTION-OUT out
+!
+interface Ethernet0/1
+ description Trunk hacia SW-AAA e0/0
+ no ip address
+!
+interface Ethernet0/1.10
+ description VLAN 10 - Admin
+ encapsulation dot1Q 10
+ ip address 10.23.56.1 255.255.255.128
+ ip tcp adjust-mss 1360
+!
+interface Ethernet0/1.20
+ description VLAN 20 - Servidores
+ encapsulation dot1Q 20
+ ip address 10.23.56.137 255.255.255.248
+ ip tcp adjust-mss 1360
+!
+interface Ethernet0/1.99
+ description VLAN 99 - Gestion
+ encapsulation dot1Q 99
+ ip address 10.23.56.129 255.255.255.248
+!
+interface Ethernet0/2
+ no ip address
+ shutdown
+!
+interface Ethernet0/3
+ no ip address
+ shutdown
+!
+no ip http server
+no ip http secure-server
+!
+ip access-list standard SSH-ADMIN
+ permit 192.168.128.1
+ permit 10.23.56.0 0.0.0.127
+ permit 10.23.56.136 0.0.0.7
+!
+ip access-list extended GESTION-IN
+ remark Solo la PC del administrador por SSH y RDP
+ permit udp any eq bootps any eq bootpc
+ permit icmp host 192.168.128.1 any echo
+ permit tcp host 192.168.128.1 any eq 22
+ permit tcp host 192.168.128.1 host 10.23.56.138 eq 3389
+ permit udp host 192.168.128.1 host 10.23.56.138 eq 3389
+ deny   ip any any log
+ip access-list extended GESTION-OUT
+ remark Solo respuestas hacia la PC del administrador
+ permit tcp any eq 22 host 192.168.128.1
+ permit tcp host 10.23.56.138 eq 3389 host 192.168.128.1
+ permit udp host 10.23.56.138 eq 3389 host 192.168.128.1
+ permit icmp any host 192.168.128.1 echo-reply
+ deny   ip any any log
+!
+ip radius source-interface Ethernet0/1.20
+!
+radius server NPS
+ address ipv4 10.23.56.138 auth-port 1812 acct-port 1813
+ key 7 <SHARED-SECRET>
+!
+privilege interface level 10 shutdown
+privilege interface level 10 description
+privilege configure level 10 interface
+privilege exec level 5 traceroute
+privilege exec level 5 ping
+privilege exec level 10 configure terminal
+privilege exec level 10 configure
+privilege exec level 5 show ip route
+privilege exec level 5 show ip interface brief
+privilege exec level 5 show ip interface
+privilege exec level 5 show ip
+privilege exec level 10 show logging
+privilege exec level 10 show running-config
+privilege exec level 0 show privilege
+privilege exec level 5 show interfaces
+privilege exec level 0 show
+banner motd ^C
+R-AAA - Lab AAA RADIUS - Matricula 2024-2356
+Acceso solo para personal autorizado. Toda actividad es registrada.
+^C
+!
+line con 0
+ authorization exec CON-AUX
+ accounting exec CON-AUX
+ logging synchronous
+ login authentication CON-AUX
+line aux 0
+ authorization exec CON-AUX
+ accounting exec CON-AUX
+ login authentication CON-AUX
+line vty 0 4
+ access-class SSH-ADMIN in
+ authorization exec VTY-SSH
+ login authentication VTY-SSH
+ transport input ssh
+!
+end

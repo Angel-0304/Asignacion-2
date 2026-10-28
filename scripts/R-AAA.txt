@@ -1,0 +1,207 @@
+=========================================================================
+R-AAA (Cisco IOL L3 - IOS 15.4)
+Lab AAA con RADIUS y NPS - Angel Alcantara - Matricula 2024-2356
+=========================================================================
+
+! ---------- 1. Configuracion de base ----------
+enable
+configure terminal
+hostname R-AAA
+no ip domain-lookup
+ip domain-name itla.local
+
+interface Ethernet0/0
+ description Gestion OOB - Cloud0
+ ip address dhcp
+ no shutdown
+exit
+
+interface Ethernet0/1
+ description Trunk hacia SW-AAA e0/0
+ no ip address
+ no shutdown
+exit
+
+interface Ethernet0/1.10
+ description VLAN 10 - Admin
+ encapsulation dot1Q 10
+ ip address 10.23.56.1 255.255.255.128
+ ip tcp adjust-mss 1360
+exit
+
+interface Ethernet0/1.20
+ description VLAN 20 - Servidores
+ encapsulation dot1Q 20
+ ip address 10.23.56.137 255.255.255.248
+ ip tcp adjust-mss 1360
+exit
+
+interface Ethernet0/1.99
+ description VLAN 99 - Gestion
+ encapsulation dot1Q 99
+ ip address 10.23.56.129 255.255.255.248
+exit
+
+ip dhcp excluded-address 10.23.56.1 10.23.56.9
+ip dhcp excluded-address 10.23.56.101 10.23.56.127
+ip dhcp pool VLAN10-ADMIN
+ network 10.23.56.0 255.255.255.128
+ default-router 10.23.56.1
+ dns-server 10.23.56.138
+ domain-name itla.local
+exit
+end
+write memory
+
+! ---------- 2. Seguridad base, logs y hora ----------
+configure terminal
+service password-encryption
+security passwords min-length 8
+enable algorithm-type scrypt secret <ENABLE-SECRET>
+username admin privilege 15 algorithm-type scrypt secret <PASSWORD>
+clock timezone AST -4 0
+service timestamps log datetime msec localtime show-timezone
+service timestamps debug datetime msec localtime show-timezone
+logging buffered 64000 debugging
+logging console notifications
+no ip http server
+no ip http secure-server
+
+! ---------- 3. AAA y RADIUS (cliente del NPS) ----------
+aaa new-model
+radius server NPS
+ address ipv4 10.23.56.138 auth-port 1812 acct-port 1813
+ key <SHARED-SECRET>
+exit
+aaa group server radius GRUPO-NPS
+ server name NPS
+exit
+ip radius source-interface Ethernet0/1.20
+
+! Consola y aux: RADIUS con usuario local de respaldo
+aaa authentication login CON-AUX group GRUPO-NPS local
+aaa authorization exec CON-AUX group GRUPO-NPS local
+aaa accounting exec CON-AUX start-stop group GRUPO-NPS
+aaa authorization console
+! VTY (SSH): solo usuario local
+aaa authentication login VTY-SSH local
+aaa authorization exec VTY-SSH local
+aaa authentication enable default enable
+
+! ---------- 4. Niveles de privilegio ----------
+! (De mayor a menor: la palabra padre "show" queda con el nivel del ultimo comando)
+privilege exec level 10 show running-config
+privilege exec level 10 show logging
+privilege exec level 10 configure terminal
+privilege configure level 10 interface
+privilege interface level 10 shutdown
+privilege interface level 10 description
+privilege exec level 5 show ip interface brief
+privilege exec level 5 show interfaces
+privilege exec level 5 show ip route
+privilege exec level 5 ping
+privilege exec level 5 traceroute
+privilege exec level 0 show privilege
+
+! ---------- 5. Logs de autenticacion y comandos ----------
+login block-for 120 attempts 3 within 60
+login on-failure log
+login on-success log
+archive
+ log config
+  logging enable
+  notify syslog contenttype plaintext
+  hidekeys
+ exit
+exit
+
+! ---------- 6. SSH ----------
+crypto key generate rsa modulus 2048
+ip ssh version 2
+ip ssh time-out 60
+ip ssh authentication-retries 3
+ip ssh logging events
+
+ip access-list standard SSH-ADMIN
+ permit host 192.168.128.1
+ permit 10.23.56.0 0.0.0.127
+ permit 10.23.56.136 0.0.0.7
+exit
+
+banner motd #
+R-AAA - Lab AAA RADIUS - Matricula 2024-2356
+Acceso solo para personal autorizado. Toda actividad es registrada.
+#
+end
+write memory
+
+! ---------- 7. Prueba contra el NPS (antes de tocar las lineas) ----------
+test aaa group GRUPO-NPS agomez <PASSWORD> new-code
+test aaa group GRUPO-NPS pgarcia <PASSWORD> new-code
+test aaa group GRUPO-NPS lmartinez <PASSWORD> new-code
+! (priv-lvl 10, 5 y 0 respectivamente)
+
+! ---------- 8. Aplicar AAA a las lineas ----------
+! (Primero las VTY para tener SSH de respaldo, despues consola y aux)
+configure terminal
+line vty 0 4
+ login authentication VTY-SSH
+ authorization exec VTY-SSH
+ access-class SSH-ADMIN in
+ transport input ssh
+ exec-timeout 10 0
+exit
+line console 0
+ login authentication CON-AUX
+ authorization exec CON-AUX
+ accounting exec CON-AUX
+ exec-timeout 10 0
+ logging synchronous
+exit
+line aux 0
+ login authentication CON-AUX
+ authorization exec CON-AUX
+ accounting exec CON-AUX
+ exec-timeout 10 0
+exit
+end
+write memory
+
+! ---------- 9. Red de gestion OOB filtrada (Cloud0) ----------
+! (Durante la instalacion hubo NAT temporal por la e0/0; se elimino al terminar)
+clear ip nat translation *
+configure terminal
+ip access-list extended GESTION-IN
+ remark Solo la PC del administrador por SSH y RDP
+ permit udp any eq bootps any eq bootpc
+ permit icmp host 192.168.128.1 any echo
+ permit tcp host 192.168.128.1 any eq 22
+ permit tcp host 192.168.128.1 host 10.23.56.138 eq 3389
+ permit udp host 192.168.128.1 host 10.23.56.138 eq 3389
+ deny ip any any log
+exit
+ip access-list extended GESTION-OUT
+ remark Solo respuestas hacia la PC del administrador
+ permit tcp any eq 22 host 192.168.128.1
+ permit tcp host 10.23.56.138 eq 3389 host 192.168.128.1
+ permit udp host 10.23.56.138 eq 3389 host 192.168.128.1
+ permit icmp any host 192.168.128.1 echo-reply
+ deny ip any any log
+exit
+interface Ethernet0/0
+ ip access-group GESTION-IN in
+ ip access-group GESTION-OUT out
+exit
+end
+write memory
+
+! ---------- Verificacion ----------
+! show ip interface brief
+! show running-config | include aaa|radius|privilege
+! show ip access-lists
+! show users
+! show logging | include SEC_LOGIN|CFGLOG|GESTION
+! (por consola) Username: agomez    -> show privilege = 10 / hostname X        = Invalid
+! (por consola) Username: pgarcia   -> show privilege = 5  / configure terminal = Invalid
+! (por consola) Username: lmartinez -> show privilege = 0  / show version       = Invalid
+! enable (con el enable secret) -> show privilege = 15
