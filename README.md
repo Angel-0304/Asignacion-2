@@ -202,7 +202,7 @@ La red de gestión (Cloud0) está filtrada en las dos direcciones con las ACL `G
 
 ## 8. Problemas encontrados
 
-![Regla de firewall para RADIUS](img/16-firewall-nps.png)
+![Regla de firewall para RADIUS]
 
 *Figura 16. Regla de firewall entrante para UDP 1812/1813, limitada al router y al switch.*
 
